@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>BeatXR — WebXR rhythm game with auto-generated charts</title>
+<style>
+  :root {
+    --red: #ff2b55;
+    --blue: #2b8cff;
+    --teal: #2affd5;
+    --bg: #05070f;
+    --panel: rgba(12, 18, 34, 0.82);
+    --line: rgba(120, 160, 220, 0.18);
+    --text: #e8eefc;
+    --muted: #8ea6c8;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  canvas#scene { position: fixed; inset: 0; display: block; }
+
+  .overlay {
+    position: fixed; inset: 0;
+    display: grid; place-items: center;
+    padding: 24px;
+    overflow: auto;
+    background:
+      radial-gradient(1200px 700px at 50% -10%, rgba(43, 140, 255, 0.22), transparent 60%),
+      radial-gradient(900px 600px at 50% 110%, rgba(255, 43, 85, 0.18), transparent 60%),
+      var(--bg);
+  }
+  .overlay[hidden] { display: none; }
+
+  .panel {
+    width: min(760px, 100%);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 28px;
+    backdrop-filter: blur(14px);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+  }
+
+  h1 {
+    margin: 0 0 4px;
+    font-size: 34px;
+    letter-spacing: -0.02em;
+    background: linear-gradient(92deg, var(--red), var(--blue) 55%, var(--teal));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .sub { margin: 0 0 22px; color: var(--muted); }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); margin: 24px 0 10px; }
+
+  .drop {
+    border: 1.5px dashed rgba(120, 170, 240, 0.4);
+    border-radius: 14px;
+    padding: 26px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+    background: rgba(255, 255, 255, 0.02);
+  }
+  .drop:hover, .drop.over { border-color: var(--teal); background: rgba(42, 255, 213, 0.06); }
+  .drop strong { display: block; font-size: 17px; margin-bottom: 4px; }
+  .drop span { color: var(--muted); font-size: 13px; }
+
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .chip {
+    flex: 1 1 90px;
+    padding: 11px 8px;
+    border-radius: 11px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text);
+    font: inherit; font-weight: 600;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .chip:hover { border-color: rgba(120, 170, 240, 0.5); }
+  .chip[aria-pressed="true"] {
+    border-color: var(--teal);
+    background: rgba(42, 255, 213, 0.14);
+    color: #eafffb;
+  }
+
+  label.field { display: block; margin: 14px 0; }
+  label.field .lab { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  input[type=range] { width: 100%; accent-color: var(--blue); }
+
+  .actions { display: flex; gap: 12px; margin-top: 24px; flex-wrap: wrap; }
+  button.primary, button.ghost {
+    flex: 1 1 200px;
+    padding: 14px 18px;
+    border-radius: 12px;
+    font: inherit; font-weight: 700; font-size: 15px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: transform .1s, filter .15s;
+  }
+  button.primary { background: linear-gradient(96deg, var(--blue), #6f5cff); color: white; }
+  button.ghost { background: rgba(255,255,255,0.05); border-color: var(--line); color: var(--text); }
+  button.primary:hover, button.ghost:hover { filter: brightness(1.12); }
+  button:active { transform: translateY(1px); }
+  button[disabled] { opacity: .45; cursor: not-allowed; filter: none; }
+
+  #waveform { width: 100%; height: 64px; display: block; margin-top: 14px; border-radius: 8px; background: rgba(255,255,255,0.03); }
+
+  .stats { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .stats b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+  .progress { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.08); overflow: hidden; margin-top: 14px; }
+  .progress i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--blue), var(--teal)); transition: width .12s; }
+
+  .note { color: var(--muted); font-size: 12.5px; margin-top: 18px; line-height: 1.6; }
+  .note code { background: rgba(255,255,255,0.07); padding: 1px 5px; border-radius: 4px; }
+  .error { color: #ff7a90; font-size: 13px; margin-top: 12px; min-height: 18px; }
+
+  /* In-play desktop HUD */
+  #playHud {
+    position: fixed; inset: 0; pointer-events: none;
+    display: none; padding: 20px;
+    font-variant-numeric: tabular-nums;
+  }
+  #playHud.on { display: block; }
+  #playHud .esc { position: absolute; top: 18px; right: 22px; color: var(--muted); font-size: 12px; }
+  #playHud .crosshair {
+    position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px;
+    border-radius: 50%; background: rgba(255,255,255,0.35);
+  }
+
+  .results dt { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .1em; }
+  .results dd { margin: 2px 0 16px; font-size: 26px; font-weight: 700; }
+  .grid4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px 20px; }
+  .rank { font-size: 64px; font-weight: 800; line-height: 1; background: linear-gradient(92deg, var(--teal), var(--blue)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<!-- ============ Menu ============ -->
+<div class="overlay" id="menu">
+  <div class="panel">
+    <h1>BeatXR</h1>
+    <p class="sub">Drop in any track. It gets analysed for onsets and tempo, then charted into a playable VR level.</p>
+
+    <div class="drop" id="drop" tabindex="0" role="button">
+      <strong id="dropTitle">Choose an audio file</strong>
+      <span>MP3, WAV, OGG, FLAC, M4A — or drag one here. Nothing is uploaded; analysis runs in your browser.</span>
+      <input type="file" id="file" accept="audio/*" hidden />
+    </div>
+
+    <canvas id="waveform" width="1400" height="128"></canvas>
+    <div class="progress" id="progressWrap" hidden><i id="progressBar"></i></div>
+    <div class="stats" id="songStats" hidden>
+      <span>Length <b id="statLength">–</b></span>
+      <span>Tempo <b id="statBpm">–</b></span>
+      <span>Onsets <b id="statOnsets">–</b></span>
+      <span>Notes <b id="statNotes">–</b></span>
+      <span>Density <b id="statNps">–</b></span>
+    </div>
+
+    <h2>Difficulty</h2>
+    <div class="row" id="difficulty"></div>
+
+    <h2>Tuning</h2>
+    <label class="field">
+      <span class="lab"><span>Detection sensitivity</span><b id="sensVal">1.40</b></span>
+      <input type="range" id="sens" min="0.6" max="2.6" step="0.05" value="1.4" />
+    </label>
+    <label class="field">
+      <span class="lab"><span>Note density</span><b id="densVal">1.00×</b></span>
+      <input type="range" id="dens" min="0.5" max="1.8" step="0.05" value="1" />
+    </label>
+    <label class="field">
+      <span class="lab"><span>Note approach speed</span><b id="njsVal">default</b></span>
+      <input type="range" id="njs" min="7" max="22" step="0.5" value="0" />
+    </label>
+    <label class="field">
+      <span class="lab"><span>Note height offset</span><b id="heightVal">0.00 m</b></span>
+      <input type="range" id="height" min="-0.5" max="0.5" step="0.02" value="0" />
+    </label>
+    <label class="field">
+      <span class="lab"><span>Music volume</span><b id="volVal">80%</b></span>
+      <input type="range" id="vol" min="0" max="1" step="0.01" value="0.8" />
+    </label>
+
+    <div class="actions">
+      <button class="primary" id="playVR" disabled>Enter VR</button>
+      <button class="ghost" id="playDesktop" disabled>Play on desktop</button>
+      <button class="ghost" id="regen" disabled>Re-chart</button>
+    </div>
+
+    <div class="error" id="error"></div>
+    <p class="note">
+      <b>VR:</b> open this page in your headset browser (Quest, Pico, WMR) or a PC browser with a linked headset, then press Enter VR.
+      <b>Desktop:</b> your mouse drives the blue saber; the red one mirrors it. Press <code>Esc</code> to quit a run.
+      A <code>local-floor</code> reference space is requested, so stand up and give yourself an arm's length of clearance.
+    </p>
+  </div>
+</div>
+
+<!-- ============ Results ============ -->
+<div class="overlay" id="results" hidden>
+  <div class="panel">
+    <h1>Run complete</h1>
+    <div class="rank" id="rank">A</div>
+    <dl class="results grid4" style="margin-top:22px">
+      <div><dt>Score</dt><dd id="rScore">0</dd></div>
+      <div><dt>Accuracy</dt><dd id="rAcc">0%</dd></div>
+      <div><dt>Max combo</dt><dd id="rCombo">0</dd></div>
+      <div><dt>Cut / Missed / Bad</dt><dd id="rCounts">0 / 0 / 0</dd></div>
+    </dl>
+    <div class="actions">
+      <button class="primary" id="again">Play again</button>
+      <button class="ghost" id="back">Back to menu</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Pause ============ -->
+<div class="overlay" id="pause" hidden>
+  <div class="panel" style="max-width:420px; text-align:center">
+    <h1 style="font-size:28px">Paused</h1>
+    <p class="sub" id="pauseAt">—</p>
+    <div class="actions">
+      <button class="primary" id="resume">Resume</button>
+      <button class="ghost" id="quit">Quit to menu</button>
+    </div>
+    <p class="note">Resuming rewinds a couple of seconds so you can pick the lane back up.</p>
+  </div>
+</div>
+
+<div id="playHud">
+  <div class="crosshair"></div>
+  <div class="esc">Esc — pause</div>
+</div>
+
+<!-- three.js r170 is vendored in ./beatxr.vendor (MIT, see vendor/three.LICENSE) so the
+     game is fully self-contained: no CDN, no install step, works offline. -->
+<script type="importmap">
+{ "imports": { "three": "./three.module.min.js" } }
+</script>
+<script type="module" src="./beatxr.main.js"></script>
+</body>
+</html>
